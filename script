@@ -1,0 +1,948 @@
+var token = "7679162529:AAF5tgK1W2Gpbw6WD9hnJGL9TL2Xq2JD9bw"; // Token dari botFather
+var ssId = "1z34NVJsyi_3e0LosQzDEQkWlA0MZruXb5_JrwhIazP8"; // ID Spreadsheet
+var telegramUrl = "https://api.telegram.org/bot" + token;
+
+// Fungsi untuk mengirim pesan ke Telegram
+// Fungsi untuk mengirim pesan ke Telegram
+function sendText(id, text) {
+  var maxLength = 4096; // Maksimal panjang pesan Telegram
+  var messages = splitMessage(text, maxLength); // Membagi pesan jika terlalu panjang
+ 
+  // Kirim setiap bagian pesan secara terpisah
+  messages.forEach(function(messagePart) {
+    var payload = {
+      chat_id: id,
+      text: messagePart
+    };
+   
+    var options = {
+      method: 'POST',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload)
+    };
+
+    var url = telegramUrl + "/sendMessage";
+    UrlFetchApp.fetch(url, options);
+  });
+}
+
+// Fungsi untuk mengirim pesan dengan keyboard inline
+function sendInlineKeyboard(id, text) {
+  const url = `https://api.telegram.org/bot${token}/sendMessage`;
+
+  const payload = {
+    chat_id: id,
+    text: text,
+    reply_markup: JSON.stringify({
+      inline_keyboard: [
+        [
+          { text: "Ya", callback_data: "yes" },
+          { text: "Tidak", callback_data: "no" },
+        ],
+      ],
+    }),
+  };
+
+  const options = {
+    method: "post",
+    contentType: "application/json",
+    payload: JSON.stringify(payload),
+  };
+
+  UrlFetchApp.fetch(url, options);
+}
+
+// Fungsi untuk membagi pesan yang terlalu panjang
+function splitMessage(text, maxLength) {
+  var messages = [];
+  while (text.length > maxLength) {
+    var part = text.substring(0, maxLength);
+    var lastSpaceIndex = part.lastIndexOf(" "); // Mencari spasi terakhir untuk memotong pesan secara wajar
+    if (lastSpaceIndex > -1) {
+      part = text.substring(0, lastSpaceIndex); // Potong di spasi terakhir
+      text = text.substring(lastSpaceIndex + 1); // Ambil bagian sisa untuk pesan selanjutnya
+    } else {
+      text = text.substring(maxLength); // Jika tidak ada spasi, potong langsung
+    }
+    messages.push(part);
+  }
+  messages.push(text); // Pesan terakhir yang lebih pendek dari maxLength
+  return messages;
+}
+
+// Fungsi untuk membaca dan memperbarui LAST_UPDATE_ID
+function getLastUpdateId() {
+  return parseInt(PropertiesService.getScriptProperties().getProperty("LAST_UPDATE_ID") || 0);
+}
+
+function setLastUpdateId(updateId) {
+  PropertiesService.getScriptProperties().setProperty("LAST_UPDATE_ID", updateId.toString());
+}
+
+// Fungsi utama untuk menerima data dari webhook
+function doPost(e) {
+  var data = JSON.parse(e.postData.contents);
+  var text = data.message.text;
+  var id = data.message.chat.id;
+  var name = data.message.chat.first_name + " " + (data.message.chat.last_name || "");
+
+
+  // Menangani perintah #lapor
+  if (/^#lapor/.test(text)) {
+    try {
+      // Memisahkan kalimat setelah #lapor menjadi pltd dan tanggal laporan
+      var textParts = text.split("\n");  // Pisahkan berdasarkan baris
+      var firstLine = textParts[0].replace(/^#lapor\s*/, "").trim(); // Kalimat setelah #lapor
+      var tanggalLaporan = textParts[1]?.replace("Tanggal Laporan:", "").trim(); // Mengambil tanggal laporan
+
+      if (!firstLine || !tanggalLaporan) {
+        sendText(id, "Pastikan ada kalimat setelah #lapor dan tanggal laporan yang valid.");
+        return; // Hentikan jika tidak ada teks setelah #lapor atau tanggal laporan kosong
+      }
+
+      var pltd = firstLine;  // Kalimat yang disimpan dalam pltd
+      var laporanData = {
+        tanggalLaporan: tanggalLaporan.replace(/;$/, "").trim()  // Menghapus tanda titik koma jika ada di akhir tanggal
+      };
+
+      var detailData = [];
+      var lines = text.split("\n");
+
+      // Parsing data laporan
+      lines.forEach(function (line) {
+        line = line.trim().replace(/;$/, ""); // Menghapus karakter `;` di akhir setiap baris
+        if (/^Jenis Laporan:/.test(line)) {
+          laporanData.jenisLaporan = line.replace("Jenis Laporan:", "").trim();
+        } else if (/^Stock Awal/.test(line)) {
+          var match = line.match(/^Stock Awal (.*) \(ltr\):\s*([\d.]+)$/);
+          if (match) {
+            laporanData[`Stock Awal ${match[1]}`] = parseFloat(match[2]);
+          }
+        } else if (/^KETERANGAN:/.test(line)) {
+          laporanData.keterangan = line.replace("KETERANGAN:", "").trim();
+        } else if (/^No /.test(line)) {
+          var detailEntry = {};
+          detailEntry.reference = line.split("#")[1]?.trim() || "";
+          detailData.push(detailEntry);
+        } else if (/^Jenis:/.test(line)) {
+          detailData[detailData.length - 1].jenis = line.replace("Jenis:", "").trim();
+        } else if (/^Volume BBM/.test(line)) {
+          detailData[detailData.length - 1].volumeBBM = line.replace("Volume BBM (ltr):", "").trim();
+        } else if (/^Tanggal Penerimaan BBM:/.test(line)) {
+          detailData[detailData.length - 1].tanggalBBM = line.replace("Tanggal Penerimaan BBM:", "").trim();
+        } else if (/^Type Pelumas:/.test(line)) {
+          detailData[detailData.length - 1].typePelumas = line.replace("Type Pelumas:", "").trim();
+        } else if (/^Volume Pelumas/.test(line)) {
+          detailData[detailData.length - 1].volumePelumas = line.replace("Volume Pelumas (ltr):", "").trim();
+        } else if (/^Tanggal Penerimaan Pelumas:/.test(line)) {
+          detailData[detailData.length - 1].tanggalPelumas = line.replace("Tanggal Penerimaan Pelumas:", "").trim();
+        } else if (/^Keterangan:/.test(line)) {
+          detailData[detailData.length - 1].keterangan = line.replace("Keterangan:", "").trim();
+        }
+      });
+
+      var formattedPltd = pltd.trim().toUpperCase();
+      var today = new Date(); // Mendapatkan tanggal saat ini
+      var year = today.getFullYear(); // Mendapatkan tahun
+      var month = today.getMonth() + 1; // Mendapatkan bulan
+
+
+      // Jika jenis laporan adalah P4, kurangi tahun dan bulan masing-masing 1
+      if (laporanData.jenisLaporan === "P4") {
+          year -= 1; // Kurangi tahun 1
+          month -= 1; // Kurangi bulan 1
+
+
+          // Jika bulan menjadi 0 (karena Januari - 1), atur ke Desember tahun sebelumnya
+          if (month === 0) {
+              month = 12;
+              year -= 1;
+          }
+      }
+
+      month = month < 10 ? '0' + month : month; // Format bulan menjadi 2 digit
+     
+      // Menggabungkan semua variabel dengan tulisan SETUJU tanpa spasi
+      var result = formattedPltd + laporanData.jenisLaporan + month + year + "SETUJU";
+
+
+      var sheetName = "Rekap";  // Nama sheet  SpreadsheetApp.openById(ssId).getSheetByName("Rekap")
+      //var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+      var sheet = SpreadsheetApp.openById(ssId).getSheetByName(sheetName);
+
+      if (!sheet) {
+          Logger.log("Sheet 'Rekap' tidak ditemukan.");
+          return;
+      }
+
+      // Mengambil data dari kolom X (kolom ke-24) mulai dari baris kedua hingga baris terakhir yang terisi
+      var dataRange = sheet.getRange(2, 24, sheet.getLastRow() - 1, 1);
+      var data = dataRange.getValues();
+
+      var dataku = null;  // Inisialisasi variabel untuk menyimpan hasil yang ditemukan
+
+      // Loop untuk mencari data yang sama dengan result
+      for (var i = 0; i < data.length; i++) {
+        if (data[i][0] === result) {
+          dataku = data[i][0];
+          Logger.log("Data sudah ada: " + dataku);
+         
+          // Jika dataku sama dengan result, kirimkan notifikasi ke Telegram
+          sendText(id, "Data sudah ada di sistem dan telah di setujui ULP.");
+          return;
+        }
+      }
+
+      /////////////////////////////////////////////////////////////////////
+      var gab_id = formattedPltd + laporanData.jenisLaporan + month + year;//cek data ada atau tidak
+      var sheetName = "Rekap";  // Nama sheet  SpreadsheetApp.openById(ssId).getSheetByName("Rekap")
+      //var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+      var sheet = SpreadsheetApp.openById(ssId).getSheetByName(sheetName);
+
+      if (!sheet) {
+        Logger.log("Sheet 'Unit' tidak ditemukan.");
+        return;
+      }
+
+      var dataI = sheet.getRange("I1:I" + sheet.getLastRow()).getValues();
+      var dataQ = sheet.getRange("Q1:Q" + sheet.getLastRow()).getValues();
+      var isValidataku = false; // Status validasi
+
+      for (var i = 0; i < dataI.length; i++) {
+        if (dataI[i][0] === gab_id && dataQ[i][0] === 1) {
+          dataku_id = dataI[i][0];          // Simpan data dari kolom I
+          datake_pltd = dataQ[i][0];          // Simpan data dari kolom Q
+          isValidataku = true;               // Tandai data valid
+          break;                        // Keluar dari loop jika validasi terpenuhi
+        }
+      }
+
+      if (isValidataku === true) {
+      // Kirim keyboard inline untuk konfirmasi
+        sendInlineKeyboard(id, "Data " +formattedPltd+ " telah diinput. Apakah anda ingin melanjutkan? Jika dilanjutkan maka akan menghapus semua persetujuan yng diberikan!");
+        // sendText(id, "Data " +formattedPltd+ " telah diinput. Apakah anda ingin melanjutkan? Jika dilanjutkan maka akan menghapus semua persetujuan yng diberikan!");
+        return;
+      }
+
+      if (data.callback_query){
+        const userChoice = data.callback_query.data; // "yes" atau "no"
+        const originalMessage = data.callback_query.message.text; // Pesan awal
+
+        if (userChoice === "yes") {
+          if (laporanData.tanggalLaporan && laporanData.jenisLaporan) {
+            var rekapSheet = SpreadsheetApp.openById(ssId).getSheetByName("Rekap") || SpreadsheetApp.openById(ssId).insertSheet("Rekap");
+            if (rekapSheet.getLastRow() === 0) {
+              rekapSheet.appendRow(["Tanggal Laporan", "Waktu Simpan", "Laporan", "Jenis Laporan", "unit_pltd", "up3", "ulp", "bulan","id", "Stock Awal HSD", "Stock Awal Meditran S30", "Stock Awal Meditran S40", "Stock Awal Meditran SX Plus", "Stock Awal Salyx", "Stock Awal NG Lube", "Keterangan", "datake", "ID User", "Nama User", "setuju_tl", "setuju_asman", "setuju_ulp", "tahun", "gabungan"]);
+            }
+
+            // Menyisipkan data pada baris kedua dan memindahkan data lama ke bawah
+            rekapSheet.insertRows(2, 1); // Menyisipkan 1 baris di baris kedua
+            rekapSheet.getRange(2, 3).setValue(pltd); // Nama laporan (penarah)
+            rekapSheet.getRange(2, 18).setValue(id);
+            rekapSheet.getRange(2, 19).setValue(name);
+            rekapSheet.getRange(2, 2).setValue(new Date());
+            rekapSheet.getRange(2, 1).setValue(laporanData.tanggalLaporan); // Tanggal Laporan yang sudah dibersihkan
+            rekapSheet.getRange(2, 4).setValue(laporanData.jenisLaporan);
+            rekapSheet.getRange(2, 10).setValue(laporanData["Stock Awal HSD"] || 0);
+            rekapSheet.getRange(2, 11).setValue(laporanData["Stock Awal Meditran S30"] || 0);
+            rekapSheet.getRange(2, 12).setValue(laporanData["Stock Awal Meditran S40"] || 0);
+            rekapSheet.getRange(2, 13).setValue(laporanData["Stock Awal Meditran SX Plus"] || 0);
+            rekapSheet.getRange(2, 14).setValue(laporanData["Stock Awal Salyx"] || 0);
+            rekapSheet.getRange(2, 15).setValue(laporanData["Stock Awal NG Lube"] || 0);
+            rekapSheet.getRange(2, 16).setValue(laporanData.keterangan || "");
+            rekapSheet.getRange(2, 5).setValue("=upper(trim(C2))");
+            rekapSheet.getRange(2, 6).setValue("=vlookup(E2;Unit!A2:C;2;false)");
+            rekapSheet.getRange(2, 7).setValue("=vlookup(E2;Unit!A2:C;3;false)");
+            rekapSheet.getRange(2, 8).setValue('=if(D2="P4";if(MONTH(B2)-1=0;12;MONTH(B2)-1);MONTH(B2))');
+            rekapSheet.getRange(2, 9).setValue('=E2&D2&H2&IF(D2="P4"; YEAR(B2)-1;YEAR(B2))');
+            rekapSheet.getRange(2, 17).setValue("=countif($I$1:I2;I2)");
+            rekapSheet.getRange(2, 20).setValue('=IFERROR(if(Q2=1;VLOOKUP(I2&"TL AMC";Persetujuan!H:Q;6;FALSE);"REJECT");"")');
+            rekapSheet.getRange(2, 21).setValue('=IFERROR(IF(T2="SETUJU";VLOOKUP(I2&"ASMAN AMC";Persetujuan!I:Q;5;FALSE);T2);"")');
+            rekapSheet.getRange(2, 22).setValue('=IFERROR(IF(T2="SETUJU";VLOOKUP(I2&"ULP";Persetujuan!J:Q;4;FALSE);U2);"")');
+            rekapSheet.getRange(2, 23).setValue('=if(D2="P4";YEAR(B2)-1;YEAR(B2))');
+            rekapSheet.getRange(2, 24).setValue('=if(V2="SETUJU";I2&V2;"")');
+            //rekapSheet.getRange(2, 25).setValue(result);
+
+            // Simpan ke sheet Detail (tanpa kolom No)
+            var detailSheet = SpreadsheetApp.openById(ssId).getSheetByName("Detail") || SpreadsheetApp.openById(ssId).insertSheet("Detail");
+            if (detailSheet.getLastRow() === 0) {
+              detailSheet.appendRow(["Tanggal Laporan", "Waktu Simpan", "PLTD", "Reference", "Jenis", "Jenis Laporan", "unit_pltd", "bulan", "id", "datake", "jenis_modif", "jenis_terima", "Volume BBM", "Tanggal BBM", "Type Pelumas", "Volume Pelumas", "Tanggal Pelumas", "Keterangan", "teks_mesin", "type_pelumas_teks", "tahun", "ID User", "Nama User"]);
+            }
+
+              // Menyimpan detailData ke sheet Detail tanpa kolom No
+              detailData.forEach(function (entry, index) {
+              // Menyisipkan 1 baris pada baris ke-2 untuk setiap entri data
+              detailSheet.insertRows(2, 1);
+
+              var row = 2; // Baris yang dimulai dari baris kedua untuk setiap data baru yang disisipkan
+              detailSheet.getRange(row, 3).setValue(pltd);
+              detailSheet.getRange(row, 22).setValue(id);
+              detailSheet.getRange(row, 23).setValue(name);
+              detailSheet.getRange(row, 2).setValue(new Date());
+              detailSheet.getRange(row, 1).setValue(laporanData.tanggalLaporan); // Tanggal Laporan yang sudah dibersihkan
+              detailSheet.getRange(row, 6).setValue(laporanData.jenisLaporan);
+              detailSheet.getRange(row, 4).setValue(entry.reference);
+              detailSheet.getRange(row, 5).setValue(entry.jenis);
+              detailSheet.getRange(row, 13).setValue(entry.volumeBBM);
+              detailSheet.getRange(row, 14).setValue(entry.tanggalBBM);
+              detailSheet.getRange(row, 15).setValue(entry.typePelumas);
+              detailSheet.getRange(row, 16).setValue(entry.volumePelumas);
+              detailSheet.getRange(row, 17).setValue(entry.tanggalPelumas);
+              detailSheet.getRange(row, 18).setValue(entry.keterangan);
+              detailSheet.getRange(row, 7).setValue("=upper(trim(C2))");
+              detailSheet.getRange(row, 8).setValue('=if(F2="P4";if(MONTH(B2)-1=0;12;MONTH(B2)-1);MONTH(B2))');
+              detailSheet.getRange(row, 9).setValue('=G2&F2&H2&IF(F2="P4"; YEAR(B2)-1;YEAR(B2))&D2');
+              detailSheet.getRange(row, 10).setValue("=countif($I$1:I2;I2)");
+              detailSheet.getRange(row, 11).setValue("=upper(TRIM(E2))");
+              detailSheet.getRange(row, 12).setValue('=IF(K2="PEMAKAIAN";"BBM & PELUMAS"; IF(M2="";IF(M2=0;"PELUMAS";"BBM");"BBM"))');
+              detailSheet.getRange(row, 19).setValue("=UPPER(TRIM(D2))");
+              detailSheet.getRange(row, 20).setValue("=upper(trim(O2))");
+              detailSheet.getRange(row, 21).setValue('=IF(F2="P4"; YEAR(B2)-1;YEAR(B2))');
+
+            });
+
+            sendText(id, "Laporan berhasil disimpan!");
+          } else {
+            sendText(id, "Format laporan tidak lengkap. Pastikan Tanggal Laporan dan Jenis Laporan diisi.");
+          }
+        } else if (userChoice === "no") {
+          sendText(id, "Laporan tidak disimpan!");
+        }
+
+      }
+
+      //////////////////////////////////////////////////////////
+      // Validasi data laporan
+      if (laporanData.tanggalLaporan && laporanData.jenisLaporan) {
+        // Simpan ke sheet Rekap
+        var rekapSheet = SpreadsheetApp.openById(ssId).getSheetByName("Rekap") || SpreadsheetApp.openById(ssId).insertSheet("Rekap");
+        if (rekapSheet.getLastRow() === 0) {
+          rekapSheet.appendRow(["Tanggal Laporan", "Waktu Simpan", "Laporan", "Jenis Laporan", "unit_pltd", "up3", "ulp", "bulan","id", "Stock Awal HSD", "Stock Awal Meditran S30", "Stock Awal Meditran S40", "Stock Awal Meditran SX Plus", "Stock Awal Salyx", "Stock Awal NG Lube", "Keterangan", "datake", "ID User", "Nama User", "setuju_tl", "setuju_asman", "setuju_ulp", "tahun", "gabungan"]);
+        }
+
+        // Menyisipkan data pada baris kedua dan memindahkan data lama ke bawah
+        rekapSheet.insertRows(2, 1); // Menyisipkan 1 baris di baris kedua
+        rekapSheet.getRange(2, 3).setValue(pltd); // Nama laporan (penarah)
+        rekapSheet.getRange(2, 18).setValue(id);
+        rekapSheet.getRange(2, 19).setValue(name);
+        rekapSheet.getRange(2, 2).setValue(new Date());
+        rekapSheet.getRange(2, 1).setValue(laporanData.tanggalLaporan); // Tanggal Laporan yang sudah dibersihkan
+        rekapSheet.getRange(2, 4).setValue(laporanData.jenisLaporan);
+        rekapSheet.getRange(2, 10).setValue(laporanData["Stock Awal HSD"] || 0);
+        rekapSheet.getRange(2, 11).setValue(laporanData["Stock Awal Meditran S30"] || 0);
+        rekapSheet.getRange(2, 12).setValue(laporanData["Stock Awal Meditran S40"] || 0);
+        rekapSheet.getRange(2, 13).setValue(laporanData["Stock Awal Meditran SX Plus"] || 0);
+        rekapSheet.getRange(2, 14).setValue(laporanData["Stock Awal Salyx"] || 0);
+        rekapSheet.getRange(2, 15).setValue(laporanData["Stock Awal NG Lube"] || 0);
+        rekapSheet.getRange(2, 16).setValue(laporanData.keterangan || "");
+        rekapSheet.getRange(2, 5).setValue("=upper(trim(C2))");
+        rekapSheet.getRange(2, 6).setValue("=vlookup(E2;Unit!A2:C;2;false)");
+        rekapSheet.getRange(2, 7).setValue("=vlookup(E2;Unit!A2:C;3;false)");
+        rekapSheet.getRange(2, 8).setValue('=if(D2="P4";if(MONTH(B2)-1=0;12;MONTH(B2)-1);MONTH(B2))');
+        rekapSheet.getRange(2, 9).setValue('=E2&D2&H2&IF(D2="P4"; YEAR(B2)-1;YEAR(B2))');
+        rekapSheet.getRange(2, 17).setValue("=countif($I$1:I2;I2)");
+        rekapSheet.getRange(2, 20).setValue('=IFERROR(if(Q2=1;VLOOKUP(I2&"TL AMC";Persetujuan!H:Q;6;FALSE);"REJECT");"")');
+        rekapSheet.getRange(2, 21).setValue('=IFERROR(IF(T2="SETUJU";VLOOKUP(I2&"ASMAN AMC";Persetujuan!I:Q;5;FALSE);T2);"")');
+        rekapSheet.getRange(2, 22).setValue('=IFERROR(IF(T2="SETUJU";VLOOKUP(I2&"ULP";Persetujuan!J:Q;4;FALSE);U2);"")');
+        rekapSheet.getRange(2, 23).setValue('=if(D2="P4";YEAR(B2)-1;YEAR(B2))');
+        rekapSheet.getRange(2, 24).setValue('=if(V2="SETUJU";I2&V2;"")');
+        //rekapSheet.getRange(2, 25).setValue(result);
+
+        // Simpan ke sheet Detail (tanpa kolom No)
+        var detailSheet = SpreadsheetApp.openById(ssId).getSheetByName("Detail") || SpreadsheetApp.openById(ssId).insertSheet("Detail");
+        if (detailSheet.getLastRow() === 0) {
+          detailSheet.appendRow(["Tanggal Laporan", "Waktu Simpan", "PLTD", "Reference", "Jenis", "Jenis Laporan", "unit_pltd", "bulan", "id", "datake", "jenis_modif", "jenis_terima", "Volume BBM", "Tanggal BBM", "Type Pelumas", "Volume Pelumas", "Tanggal Pelumas", "Keterangan", "teks_mesin", "type_pelumas_teks", "tahun", "ID User", "Nama User"]);
+        }
+
+          // Menyimpan detailData ke sheet Detail tanpa kolom No
+          detailData.forEach(function (entry, index) {
+          // Menyisipkan 1 baris pada baris ke-2 untuk setiap entri data
+          detailSheet.insertRows(2, 1);
+
+          var row = 2; // Baris yang dimulai dari baris kedua untuk setiap data baru yang disisipkan
+          detailSheet.getRange(row, 3).setValue(pltd);
+          detailSheet.getRange(row, 22).setValue(id);
+          detailSheet.getRange(row, 23).setValue(name);
+          detailSheet.getRange(row, 2).setValue(new Date());
+          detailSheet.getRange(row, 1).setValue(laporanData.tanggalLaporan); // Tanggal Laporan yang sudah dibersihkan
+          detailSheet.getRange(row, 6).setValue(laporanData.jenisLaporan);
+          detailSheet.getRange(row, 4).setValue(entry.reference);
+          detailSheet.getRange(row, 5).setValue(entry.jenis);
+          detailSheet.getRange(row, 13).setValue(entry.volumeBBM);
+          detailSheet.getRange(row, 14).setValue(entry.tanggalBBM);
+          detailSheet.getRange(row, 15).setValue(entry.typePelumas);
+          detailSheet.getRange(row, 16).setValue(entry.volumePelumas);
+          detailSheet.getRange(row, 17).setValue(entry.tanggalPelumas);
+          detailSheet.getRange(row, 18).setValue(entry.keterangan);
+          detailSheet.getRange(row, 7).setValue("=upper(trim(C2))");
+          detailSheet.getRange(row, 8).setValue('=if(F2="P4";if(MONTH(B2)-1=0;12;MONTH(B2)-1);MONTH(B2))');
+          detailSheet.getRange(row, 9).setValue('=G2&F2&H2&IF(F2="P4"; YEAR(B2)-1;YEAR(B2))&D2');
+          detailSheet.getRange(row, 10).setValue("=countif($I$1:I2;I2)");
+          detailSheet.getRange(row, 11).setValue("=upper(TRIM(E2))");
+          detailSheet.getRange(row, 12).setValue('=IF(K2="PEMAKAIAN";"BBM & PELUMAS"; IF(M2="";IF(M2=0;"PELUMAS";"BBM");"BBM"))');
+          detailSheet.getRange(row, 19).setValue("=UPPER(TRIM(D2))");
+          detailSheet.getRange(row, 20).setValue("=upper(trim(O2))");
+          detailSheet.getRange(row, 21).setValue('=IF(F2="P4"; YEAR(B2)-1;YEAR(B2))');
+
+        });
+
+        sendText(id, "Laporan berhasil disimpan!");
+      } else {
+        sendText(id, "Format laporan tidak lengkap. Pastikan Tanggal Laporan dan Jenis Laporan diisi.");
+      }
+    } catch (error) {
+      sendText(id, "Terjadi kesalahan saat memproses laporan:\n" + error.message);
+    }
+  }
+
+  // Menangani perintah #persetujuan
+  else if (/^#persetujuan/.test(text)) {
+    try {
+        // Memisahkan baris dari teks
+        var textParts = text.split("\n").map(line => line.trim());
+
+        // Deklarasi variabel utama
+        var jenisLaporan = "";
+        var bulan = "";
+        var tingkatPersetujuan = "";
+        var status = "";
+
+        // Memproses header persetujuan
+        textParts.forEach(function (line) {
+            line = line.replace(/;$/, ""); // Hapus titik koma di akhir baris
+            if (/^Jenis Laporan:/.test(line)) {
+                jenisLaporan = line.replace("Jenis Laporan:", "").trim();
+            } else if (/^Bulan:/.test(line)) {
+                bulan = line.replace("Bulan:", "").trim();
+            } else if (/^Tingkat Persetujuan:/.test(line)) {
+                tingkatPersetujuan = line.replace("Tingkat Persetujuan:", "").trim();
+            } else if (/^Status:/.test(line)) {
+                status = line.replace("Status:", "").trim();
+            }
+        });
+
+        // Validasi header persetujuan
+        if (!jenisLaporan || !bulan || !tingkatPersetujuan || !status) {
+            sendText(id, "Format persetujuan tidak lengkap. Pastikan header sudah diisi dengan benar.");
+            return;
+        }
+
+        // Mendapatkan baris data PLTD berdasarkan "No"
+        var dataLines = textParts.filter(line => /^No/.test(line));
+
+
+        if (dataLines.length === 0) {
+            sendText(id, "Tidak ada data PLTD ditemukan. Pastikan format sudah benar.");
+            return;
+        }
+
+        // Akses sheet Persetujuan
+        var persetujuanSheet = SpreadsheetApp.openById(ssId).getSheetByName("Persetujuan") || SpreadsheetApp.openById(ssId).insertSheet("Persetujuan");
+        if (persetujuanSheet.getLastRow() === 0) {
+            persetujuanSheet.appendRow(["Waktu Simpan", "PLTD", "unit_pltd", "up3", "ulp", "Jenis Laporan", "Bulan", "id_tl", "id_asman", "id_ulp", "Tingkat Persetujuan", "Status", "status_teks", "Keterangan", "id_tele", "user", "datake", "verifikasi", "tahun"]);
+        }
+
+
+        // Memproses setiap data PLTD
+          dataLines.forEach(function (line) {
+            var parts = line.split("#"); // Memisahkan berdasarkan tanda #
+            if (parts.length < 2) {
+                sendText(id, "Format PLTD salah pada baris: " + line);
+                return;
+            }
+
+
+            // Memisahkan PLTD dan keterangan
+            var pltd = parts[1].split("Keterangan:")[0].trim(); // Mengambil seluruh teks setelah tanda pagar hingga sebelum "Keterangan"
+           
+            textParts.forEach(function (line) {
+            line = line.replace(/;$/, ""); // Hapus titik koma di akhir baris
+              if (/^Keterangan:/.test(line)) {
+                  keterangan = line.replace("Keterangan:", "").trim();
+                }
+            });
+
+
+            var pltdoke = pltd.trim().toUpperCase();
+            var today = new Date(); // Mendapatkan tanggal saat ini
+            var year = today.getFullYear(); // Mendapatkan tahun
+
+
+            // Jika jenis laporan adalah P4, kurangi tahun dan bulan masing-masing 1
+            if (jenisLaporan === "P4") {
+                year -= 1; // Kurangi tahun 1
+            }
+            var gab = pltdoke + jenisLaporan + bulan + year;
+
+
+            //cek data ada atau tidak
+            var sheetName = "Rekap";  // Nama sheet  SpreadsheetApp.openById(ssId).getSheetByName("Rekap")
+            //var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+            var sheet = SpreadsheetApp.openById(ssId).getSheetByName(sheetName);
+
+
+            if (!sheet) {
+                Logger.log("Sheet 'Rekap' tidak ditemukan.");
+                return;
+            }
+
+            // Mengambil data dari kolom I (kolom ke-9) mulai dari baris kedua hingga baris terakhir yang terisi
+            var dataRange = sheet.getRange(2, 9, sheet.getLastRow() - 1, 1);
+            var data = dataRange.getValues();
+
+
+            var dataku = null;  // Inisialisasi variabel untuk menyimpan hasil yang ditemukan
+
+
+            // Flag untuk menandai apakah gab ditemukan
+            var found = false;
+
+
+              // Loop untuk mencari data yang sama dengan gab
+              for (var i = 0; i < data.length; i++) {
+                  if (data[i][0] === gab) {
+                      found = true; // Tandai bahwa gab ditemukan
+                      dataku = data[i][0];
+                      Logger.log("Data ditemukan: " + dataku);
+                      break; // Keluar dari loop karena data sudah ditemukan
+                  }
+              }
+
+            // Jika gab tidak ditemukan, kirim notifikasi dan hentikan proses
+            if (!found) {
+                Logger.log("Data tidak ditemukan: " + gab);
+                sendText(id, "Data " + pltdoke + "-" + jenisLaporan + " Periode " + bulan + " " + year + " belum diinput di sistem. Data tidak akan disimpan.");
+                return; // Hentikan eksekusi jika gab tidak ditemukan
+            }
+
+
+        //verifikasi pengguna
+        //verifikasi pengguna TL AMC
+            if (tingkatPersetujuan === "TL AMC") {
+              //var benar ="iya benar ini TL AMC";
+
+
+              //cek data ada atau tidak
+              var sheetName = "Unit";  // Nama sheet  SpreadsheetApp.openById(ssId).getSheetByName("Rekap")
+              //var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+              var sheet = SpreadsheetApp.openById(ssId).getSheetByName(sheetName);
+
+
+              if (!sheet) {
+                  Logger.log("Sheet 'Unit' tidak ditemukan.");
+                  return;
+              }
+
+              var dataA = sheet.getRange("A1:A" + sheet.getLastRow()).getValues();
+              var dataD = sheet.getRange("D1:D" + sheet.getLastRow()).getValues();
+              var dataE = sheet.getRange("E1:E" + sheet.getLastRow()).getValues();
+
+
+              // Data yang ingin dicari
+              //var target = "penarah";
+
+
+              // Variabel untuk menyimpan hasil
+              var dataku = "";
+              var datauserpltd = "";
+              var datacol = "";
+              var isValid = false; // Status validasi
+
+
+                  // Loop untuk mencari data di kolom A dan validasi kolom E
+                  for (var i = 0; i < dataA.length; i++) {
+                      if (dataA[i][0] === pltdoke && dataE[i][0] === id) {
+                          dataku = dataA[i][0];          // Simpan data dari kolom A
+                          datacol = dataE[i][0];          // Simpan data dari kolom E
+                          datauserpltd = dataD[i][0];   // Simpan data dari kolom D
+                          isValid = true;               // Tandai data valid
+                          break;                        // Keluar dari loop jika validasi terpenuhi
+                      }
+                  }
+
+
+              if (isValid === false) {
+                sendText(id, "Data " +pltdoke+ " tidak dapat disimpan, karena User dan ID tidak mempunyai wewenang");
+                return;
+              }
+
+            }
+
+        //verifikasi pengguna ASMAN AMC
+              else if (tingkatPersetujuan === "ASMAN AMC") {
+                //var benar ="iya benar ini TL AMC";
+
+
+                //cek data ada atau tidak
+                var sheetName = "Unit";  // Nama sheet  SpreadsheetApp.openById(ssId).getSheetByName("Rekap")
+                //var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+                var sheet = SpreadsheetApp.openById(ssId).getSheetByName(sheetName);
+
+
+                if (!sheet) {
+                    Logger.log("Sheet 'Unit' tidak ditemukan.");
+                    return;
+                }
+
+                var dataA = sheet.getRange("A1:A" + sheet.getLastRow()).getValues();
+                var dataD = sheet.getRange("D1:D" + sheet.getLastRow()).getValues();
+                var dataE = sheet.getRange("F1:F" + sheet.getLastRow()).getValues();
+
+                // Data yang ingin dicari
+                //var target = "penarah";
+
+                // Variabel untuk menyimpan hasil
+                var dataku = "";
+                var datauserpltd = "";
+                var datacol = "";
+                var isValid = false; // Status validasi
+
+
+                    // Loop untuk mencari data di kolom A dan validasi kolom F
+                    for (var i = 0; i < dataA.length; i++) {
+                        if (dataA[i][0] === pltdoke && dataE[i][0] === id) {
+                            dataku = dataA[i][0];          // Simpan data dari kolom A
+                            datacol = dataE[i][0];          // Simpan data dari kolom E
+                            datauserpltd = dataD[i][0];   // Simpan data dari kolom D
+                            isValid = true;               // Tandai data valid
+                            break;                        // Keluar dari loop jika validasi terpenuhi
+                        }
+                    }
+
+
+                if (isValid === false) {
+                  sendText(id, "Data " +pltdoke+ " tidak dapat disimpan, karena User dan ID tidak mempunyai wewenang");
+                  return;
+                }
+
+
+                // cek data apakah TL AMC sudah melakukan persetujuan
+                //cek data ada atau tidak
+                var sheetName = "Rekap";  // Nama sheet  SpreadsheetApp.openById(ssId).getSheetByName("Rekap")
+                //var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+                var sheet = SpreadsheetApp.openById(ssId).getSheetByName(sheetName);
+
+
+                if (!sheet) {
+                    Logger.log("Sheet 'Rekap' tidak ditemukan.");
+                    return;
+                }
+
+                var dataI = sheet.getRange("I1:I" + sheet.getLastRow()).getValues();
+                var dataT = sheet.getRange("T1:T" + sheet.getLastRow()).getValues();
+
+                var gabverasman = "";
+                var statusverasman = "";
+                var validasman = false; //status validasi
+
+                // Loop untuk mencari data di kolom I dan validasi kolom T
+                    for (var i = 0; i < dataI.length; i++) {
+                        if (dataI[i][0] === gab && dataT[i][0] === "SETUJU") {
+                            gabverasman = dataI[i][0];          // Simpan data dari kolom A
+                            statusverasman = dataT[i][0];          // Simpan data dari kolom E
+                            //datauserpltd = dataD[i][0];   // Simpan data dari kolom D
+                            validasman = true;               // Tandai data valid
+                            break;                        // Keluar dari loop jika validasi terpenuhi
+                        }
+                    }
+
+
+                if (validasman === false) {
+                  sendText(id, "Data " +pltdoke+ " tidak dapat disimpan, karena TL AMC belum melakukan persetujuan");
+                  return;
+                }                
+
+
+              }
+
+
+        //verifikasi pengguna ULP
+              else if (tingkatPersetujuan === "ULP") {
+                //var benar ="iya benar ini TL AMC";
+
+
+                //cek data ada atau tidak
+                var sheetName = "Unit";  // Nama sheet  SpreadsheetApp.openById(ssId).getSheetByName("Rekap")
+                //var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+                var sheet = SpreadsheetApp.openById(ssId).getSheetByName(sheetName);
+
+
+                if (!sheet) {
+                    Logger.log("Sheet 'Unit' tidak ditemukan.");
+                    return;
+                }
+
+
+                var dataA = sheet.getRange("A1:A" + sheet.getLastRow()).getValues();
+                var dataD = sheet.getRange("D1:D" + sheet.getLastRow()).getValues();
+                var dataE = sheet.getRange("G1:G" + sheet.getLastRow()).getValues();
+
+
+                // Data yang ingin dicari
+                //var target = "penarah";
+
+
+                // Variabel untuk menyimpan hasil
+                var dataku = "";
+                var datauserpltd = "";
+                var datacol = "";
+                var isValid = false; // Status validasi
+
+
+                    // Loop untuk mencari data di kolom A dan validasi kolom F
+                    for (var i = 0; i < dataA.length; i++) {
+                        if (dataA[i][0] === pltdoke && dataE[i][0] === id) {
+                            dataku = dataA[i][0];          // Simpan data dari kolom A
+                            datacol = dataE[i][0];          // Simpan data dari kolom E
+                            datauserpltd = dataD[i][0];   // Simpan data dari kolom D
+                            isValid = true;               // Tandai data valid
+                            break;                        // Keluar dari loop jika validasi terpenuhi
+                        }
+                    }
+
+
+                if (isValid === false) {
+                  sendText(id, "Data " +pltdoke+ " tidak dapat disimpan, karena User dan ID tidak mempunyai wewenang");
+                  return;
+                }
+
+
+                // cek data apakah TL AMC sudah melakukan persetujuan
+                //cek data ada atau tidak
+                var sheetName = "Rekap";  // Nama sheet  SpreadsheetApp.openById(ssId).getSheetByName("Rekap")
+                //var spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+                var sheet = SpreadsheetApp.openById(ssId).getSheetByName(sheetName);
+
+
+                if (!sheet) {
+                    Logger.log("Sheet 'Rekap' tidak ditemukan.");
+                    return;
+                }
+
+                var dataI = sheet.getRange("I1:I" + sheet.getLastRow()).getValues();
+                var dataT = sheet.getRange("U1:U" + sheet.getLastRow()).getValues();
+
+
+                var gabverasman = "";
+                var statusverasman = "";
+                var validasman = false; //status validasi
+
+
+                // Loop untuk mencari data di kolom I dan validasi kolom T
+                    for (var i = 0; i < dataI.length; i++) {
+                        if (dataI[i][0] === gab && dataT[i][0] === "SETUJU") {
+                            gabverasman = dataI[i][0];          // Simpan data dari kolom A
+                            statusverasman = dataT[i][0];          // Simpan data dari kolom E
+                            //datauserpltd = dataD[i][0];   // Simpan data dari kolom D
+                            validasman = true;               // Tandai data valid
+                            break;                        // Keluar dari loop jika validasi terpenuhi
+                        }
+                    }
+
+
+                if (validasman === false) {
+                  sendText(id, "Data " +pltdoke+ " tidak dapat disimpan, karena ASMAN AMC belum melakukan persetujuan");
+                  return;
+                }                
+
+
+              }
+
+            // Jika gab ditemukan, lanjutkan menyimpan data
+            persetujuanSheet.insertRows(2, 1);
+            persetujuanSheet.getRange(2, 1).setValue(new Date()); // Waktu Simpan
+            persetujuanSheet.getRange(2, 2).setValue(pltd); // PLTD
+            persetujuanSheet.getRange(2, 6).setValue(jenisLaporan); // Jenis Laporan
+            persetujuanSheet.getRange(2, 7).setValue(bulan); // Bulan
+            persetujuanSheet.getRange(2, 11).setValue(tingkatPersetujuan); // Tingkat Persetujuan
+            persetujuanSheet.getRange(2, 12).setValue(status); // Status
+            persetujuanSheet.getRange(2, 14).setValue(keterangan); // Keterangan
+            persetujuanSheet.getRange(2, 15).setValue(id); // ID Telegram
+            persetujuanSheet.getRange(2, 16).setValue(name); // Nama Pengguna
+            persetujuanSheet.getRange(2, 3).setValue("=upper(trim(B2))"); // unit_pltd
+            persetujuanSheet.getRange(2, 4).setValue("=vlookup(C2;Unit!$A$2:C;2;false)"); // up3
+            persetujuanSheet.getRange(2, 5).setValue("=vlookup(C2;Unit!$A$2:C;3;false)"); // ulp
+            persetujuanSheet.getRange(2, 8).setValue('=IF(K2="TL AMC";C2&F2&G2&IF(F2="P4"; YEAR(A2)-1;YEAR(A2))&K2;"")');
+            persetujuanSheet.getRange(2, 9).setValue('=IF(K2="ASMAN AMC";C2&F2&G2&IF(F2="P4"; YEAR(A2)-1;YEAR(A2))&K2;"")');
+            persetujuanSheet.getRange(2, 10).setValue('=IF(K2="ULP";C2&F2&G2&IF(F2="P4"; YEAR(A2)-1;YEAR(A2))&K2;"")');
+            persetujuanSheet.getRange(2, 13).setValue('=IF(O2=R2;upper(trim(L2));"ID TIDAK SESUAI")');
+            persetujuanSheet.getRange(2, 17).setValue('=IF(AND(H2="";I2="");countif($J$1:J2;J2);IF(AND(H2="";J2="");countif($I$1:I2;I2);countif($H$1:H2;H2)))');
+            persetujuanSheet.getRange(2, 18).setValue('=IF(K2="TL AMC";VLOOKUP(T2;Unit!D:G;2;FALSE);if(K2="ASMAN AMC";VLOOKUP(T2;Unit!D:G;3;FALSE);VLOOKUP(T2;Unit!D:G;4;FALSE)))');
+            persetujuanSheet.getRange(2, 19).setValue('=IF(F2="P4"; YEAR(A2)-1;YEAR(A2))');
+            persetujuanSheet.getRange(2, 20).setValue(datauserpltd); // Gab
+            persetujuanSheet.getRange(2, 21).setValue(dataku); // Data ditemukan
+            persetujuanSheet.getRange(2, 22).setValue(datacol); // Data ditemukan
+            persetujuanSheet.getRange(2, 23).setValue(gabverasman); // Data ditemukan
+            persetujuanSheet.getRange(2, 24).setValue(statusverasman); // Data ditemukan
+
+            sendText(id, "Data persetujuan " + pltdoke + " berhasil disimpan!");
+          });
+
+
+        //sendText(id, "Semua data persetujuan berhasil disimpan!");
+    } catch (error) {
+        sendText(id, "Terjadi kesalahan saat memproses persetujuan:\n" + error.message);
+    }
+}
+
+
+//PERINTAH CARI DATA
+ else if (/^#cari\s+/.test(text)) {
+  try {
+    var pltdSearch = text.replace(/^#cari\s+/, "").trim(); // Mengambil PLTD setelah #cari
+    if (!pltdSearch) {
+      sendText(id, "Silakan masukkan PLTD yang ingin dicari.");
+      return;
+    }
+
+
+    // Mencari di sheet Rekap
+    var rekapSheet = SpreadsheetApp.openById(ssId).getSheetByName("Rekap");
+    if (rekapSheet) {
+      var dataRekap = rekapSheet.getDataRange().getValues();
+      var resultsRekap = [];
+      // Menyimpan nama kolom untuk hasil pencarian
+      var headerRekap = dataRekap[0];
+
+
+      // Mencari data terbaru di sheet Rekap dengan syarat kolom ke-17 bernilai 1 dan PLTD di kolom ke-3
+      dataRekap.forEach(function (row, index) {
+        if (
+          index > 0 && // Lewati header
+          row[16] == 1 && // Kolom ke-17 bernilai 1
+          row[2].toLowerCase() === pltdSearch.toLowerCase() // Kolom ke-3 (PLTD) sesuai dengan yang dicari
+        ) {
+          var resultRow = headerRekap.map(function (col, i) {
+            return col + ": " + row[i]; // Menambahkan nama kolom dan nilainya
+          });
+          resultsRekap.push(resultRow.join("\n")); // Ganti pemisah dengan newline
+        }
+      });
+
+
+      // Mencari di sheet Detail
+      var detailSheet = SpreadsheetApp.openById(ssId).getSheetByName("Detail");
+      var dataDetail = detailSheet ? detailSheet.getDataRange().getValues() : [];
+      var resultsDetail = [];
+      // Menyimpan nama kolom untuk detail
+      var headerDetail = dataDetail[0];
+
+
+      // Menyusun hasil pencarian terbaru di sheet Detail dengan syarat kolom ke-10 bernilai 1 dan PLTD di kolom ke-3
+      dataDetail.forEach(function (row, index) {
+        if (
+          index > 0 && // Lewati header
+          row[9] == 1 && // Kolom ke-10 bernilai 1
+          row[2].toLowerCase() === pltdSearch.toLowerCase() // Kolom ke-3 (PLTD) sesuai dengan yang dicari
+        ) {
+          var resultRow = headerDetail.map(function (col, i) {
+            return col + ": " + row[i]; // Menambahkan nama kolom dan nilainya
+          });
+          resultsDetail.push(resultRow.join("\n")); // Ganti pemisah dengan newline
+        }
+      });
+
+
+      // Mengirim hasil pencarian
+      var message = "";
+      if (resultsRekap.length > 0) {
+        message += "Hasil Pencarian di Rekap:\n\n";
+        resultsRekap.forEach(function (row) {
+          message += row + "\n\n"; // Tambahkan newline setelah setiap data
+        });
+      } else {
+        message += "Tidak ada data yang ditemukan di sheet Rekap.\n";
+      }
+
+
+      if (resultsDetail.length > 0) {
+        message += "\nHasil Pencarian di Detail:\n\n";
+        resultsDetail.forEach(function (row) {
+          message += row + "\n\n"; // Tambahkan newline setelah setiap data
+        });
+      } else {
+        message += "Tidak ada data yang ditemukan di sheet Detail.";
+      }
+
+
+      // Mengirimkan pesan yang telah dibagi jika panjangnya melebihi batas
+      sendText(id, message);
+    } else {
+      sendText(id, "Sheet Rekap atau Detail tidak ditemukan.");
+    }
+  } catch (error) {
+    sendText(id, "Terjadi kesalahan saat mencari data:\n" + error.message);
+  }
+} 
+
+else if (/^#monitoring/.test(text)) {
+    try {
+      // Pisahkan teks per baris
+      var lines = text.split('\n');
+
+      // Ambil nama sheet dari baris pertama setelah #monitoring
+      var firstLine = lines[0].replace(/^#monitoring\s*/, '').trim();
+      if (!firstLine) {
+        sendText(id, "Nama sheet tidak ditemukan. Pastikan formatnya benar.");
+        return;
+      }
+      var sheetName = firstLine;
+
+      // Ambil data laporan dari baris berikutnya
+      var jenisLaporan = lines[1]?.replace("Jenis Laporan:", "").replace(/;/g, "").trim();
+      var bulan = lines[2]?.replace("Bulan:", "").replace(/;/g, "").trim();
+      var tahun = lines[3]?.replace("Tahun:", "").replace(/;/g, "").trim();
+
+      if (!jenisLaporan || !bulan || !tahun) {
+        sendText(id, "Data tidak lengkap. Pastikan formatnya benar.");
+        return;
+      }
+
+      // Buka spreadsheet dan sheet
+      //var ss = SpreadsheetApp.getActiveSpreadsheet();
+      //var sheet = ss.getSheetByName(sheetName);
+	  
+	  var sheet = SpreadsheetApp.openById(ssId).getSheetByName(sheetName) || SpreadsheetApp.openById(ssId).insertSheet(sheetName);
+
+      if (!sheet) {
+        sendText(id, "Sheet '" + sheetName + "' tidak ditemukan. Pastikan sheet sudah dibuat.");
+        return;
+      }
+
+      // Tulis data ke kolom AH, AI, AJ di baris ke-2
+      sheet.getRange("AH2").setValue(jenisLaporan);
+      sheet.getRange("AI2").setValue(bulan);
+      sheet.getRange("AJ2").setValue(tahun);
+
+      // Baca data dari kolom AM2:AQ2
+      var jenisLaporan = sheet.getRange("AH2").getValue() || "Kosong";
+      var bulan = sheet.getRange("AI2").getValue() || "Kosong";
+      var tahun = sheet.getRange("AJ2").getValue() || "Kosong";
+
+      // Membaca data dari kolom AM hingga AQ
+      var lastRow = sheet.getLastRow();
+      var dataRange = sheet.getRange(2, 39, lastRow - 1, 5).getValues(); // AM = kolom ke-39, AQ = 39+5-1
+      var headers = ["PLTD", "Laporan", "TL AMC", "ASMAN AMC", "MULP"];
+      var dataText = headers.join(" | ") + "\n";
+
+      // Menggabungkan data setiap baris
+      dataText += dataRange.map(row => row.map(cell => cell || "Kosong").join(" | ")).join("\n");
+
+      // Menyusun pesan hasil
+      var message = `Hasil Monitoring ${sheetName} BBM:\n\n` +
+                    `Jenis Laporan: ${jenisLaporan}\n` +
+                    `Bulan: ${bulan}\n` +
+                    `Tahun: ${tahun}\n\n` +
+                    `Data Monitoring Pelaporan:\n${dataText}`;
+
+      // Mengirimkan pesan ke Telegram
+      sendText(id, message);
+    } catch (error) {
+      sendText(id, "Terjadi kesalahan: " + error.message);
+    }
+  }
+
+else {
+    sendText(id, "Perintah tidak dikenali. Gunakan format laporan atau persetujuan yang benar.");
+  }
+}
